@@ -35,42 +35,44 @@ IMG_SIZE = 384
 # -----------------------------------------------------------
 # 1. 데이터셋 다운로드 및 준비
 # -----------------------------------------------------------
-print("데이터셋 다운로드 시작 (Kaggle Hub)...")
-try:
-    path = kagglehub.dataset_download("freedomfighter1290/wheat-disease")
-    print(f"\n✅ 다운로드 경로: {path}")
-except Exception as e:
-    print(f"❌ 다운로드 실패: {e}")
-    print("💡 팁: 'kaggle.json' 파일이 사용자 폴더의 .kaggle 안에 있는지 확인하세요.")
-    exit()
-
-# 폴더 구조 정리 로직
 destination_path = os.path.join(BASE_DIR, "datasets")
 
-# 이미 datasets 폴더가 있으면 다시 다운로드/이동 하지 않도록 체크
+# 1. 데이터셋 폴더가 없으면 -> 다운로드 받고 이동시킴
 if not os.path.exists(destination_path):
-    print("📦 데이터셋 폴더 이동 및 정리 중...")
-    
-    # Wheat_Disease 하위 폴더 처리
-    path_with_subfolder = os.path.join(path, 'Wheat_Disease')
-    if os.path.exists(path_with_subfolder):
-        path = path_with_subfolder
+    print("📂 데이터셋 폴더가 없습니다. 다운로드를 시작합니다 (Kaggle Hub)...")
+    try:
+        # 다운로드를 이 안에서 수행
+        path = kagglehub.dataset_download("freedomfighter1290/wheat-disease")
+        print(f"\n✅ 다운로드 경로: {path}")
+        
+        # Wheat_Disease 하위 폴더 처리
+        path_with_subfolder = os.path.join(path, 'Wheat_Disease')
+        if os.path.exists(path_with_subfolder):
+            path = path_with_subfolder
 
-    # 필터링 로직 (USE_FILTERED_CLASSES가 True일 때만)
-    if USE_FILTERED_CLASSES:
-        for split in SPLIT_FOLDERS:
-            split_path = os.path.join(path, split)
-            if os.path.exists(split_path):
-                for item in os.listdir(split_path):
-                    item_path = os.path.join(split_path, item)
-                    if os.path.isdir(item_path) and item not in ALLOWED_CLASSES:
-                        shutil.rmtree(item_path)
+        # 필터링 로직 (USE_FILTERED_CLASSES가 True일 때만)
+        if USE_FILTERED_CLASSES:
+            for split in SPLIT_FOLDERS:
+                split_path = os.path.join(path, split)
+                if os.path.exists(split_path):
+                    for item in os.listdir(split_path):
+                        item_path = os.path.join(split_path, item)
+                        if os.path.isdir(item_path) and item not in ALLOWED_CLASSES:
+                            shutil.rmtree(item_path)
 
-    # 폴더 이동
-    shutil.move(path, destination_path)
-    print(f"✅ 데이터셋 준비 완료: {destination_path}")
+        # 폴더 이동
+        print("📦 데이터셋 폴더 이동 및 정리 중...")
+        shutil.move(path, destination_path)
+        print(f"✅ 데이터셋 준비 완료: {destination_path}")
+
+    except Exception as e:
+        print(f"❌ 다운로드 또는 이동 실패: {e}")
+        print("💡 팁: 'kaggle.json' 파일 확인 또는 인터넷 연결을 확인하세요.")
+        exit()
+
+# 2. 데이터셋 폴더가 이미 있으면 -> 다운로드 아예 안 함
 else:
-    print(f"✅ 기존 데이터셋 폴더를 사용합니다: {destination_path}")
+    print(f"✅ 기존 데이터셋 폴더를 발견했습니다. 다운로드를 건너뜁니다: {destination_path}")
 
 
 # -----------------------------------------------------------
@@ -133,38 +135,52 @@ print("🚀 학습 시작...")
 for epoch in range(1, EPOCHS+1):
     model.train()
     total_loss, total = 0, 0
+    train_correct = 0  # ✅ [추가] 훈련 정답 개수 초기화
 
     for batch_idx, (x, y) in enumerate(train_dl):
         x, y = x.to(device), y.to(device)
+        
         optimizer.zero_grad()
-        loss = criterion(model(x), y)
+        
+        # 모델 예측값 한 번만 계산해서 변수에 저장
+        outputs = model(x) 
+        loss = criterion(outputs, y)
+        
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item() * y.size(0)
         total += y.size(0)
         
-        # 진행률 간단 출력 (선택 사항)
+        # ✅ [추가] 훈련 정확도 계산 로직
+        preds = outputs.argmax(dim=1)
+        train_correct += (preds == y).sum().item()
+        
         if batch_idx % 10 == 0:
             print(f"Epoch {epoch} [{batch_idx}/{len(train_dl)}] Loss: {loss.item():.4f}", end='\r')
 
     scheduler.step()
 
-    # 검증
+    # 훈련 정확도 계산
+    train_acc = train_correct / total * 100 # ✅ [추가]
+
+    # 검증 (Validation)
     model.eval()
-    correct, val_total = 0, 0
+    correct, val_total = 0, 0 # (변수명 겹치지 않게 주의)
     with torch.no_grad():
         for x, y in val_dl:
             x, y = x.to(device), y.to(device)
             preds = model(x).argmax(dim=1)
-            correct += (preds == y).sum().item()
+            correct += (preds == y).sum().item() # 여기는 검증 정답 개수
             val_total += y.size(0)
 
-    acc = correct / val_total * 100
-    print(f"\n[{epoch}/{EPOCHS}] Train Loss: {total_loss/total:.4f} | Val Acc: {acc:.2f}%")
+    val_acc = correct / val_total * 100
+    
+    # ✅ [수정] 출력문에 Train Acc 추가
+    print(f"\n[{epoch}/{EPOCHS}] Train Loss: {total_loss/total:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
 
-    if acc > best_acc:
-        best_acc = acc
+    if val_acc > best_acc:
+        best_acc = val_acc
         torch.save({
             "state_dict": model.state_dict(),
             "class_names": class_names,

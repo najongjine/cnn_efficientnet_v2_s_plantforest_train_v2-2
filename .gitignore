@@ -11,3 +11,4 @@ venv/
 my_local_models/
 model_save/
 my_models/
+datasets/
